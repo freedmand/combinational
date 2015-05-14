@@ -3,7 +3,7 @@
 A combinational circuit simulator using optimized ternary analysis. Incorporates an elite genetic algorithm for evolving circuits towards a Boolean goal.
 
 Compilation:
-`gcc -Wall -DSFMT_MEXP=19937 -g -o combinational combinational.c mt/SFMT.c`
+`gcc -Wall -DSFMT_MEXP=19937 -O3 -o combinational combinational.c mt/SFMT.c`
 
 Usage:
 `./combinational`
