@@ -23,14 +23,17 @@ typedef struct gate gate;
 #define TRIALS 10000
 #define EPOCH 20
 #define CIRCUITS 1000
-
 #define ELITE 300
+
+#define EXPERIMENTS 50
 
 #define CACHE_UNDEFINED -2
 #define MAX_CACHE 8
 
-#define DEGREE 16
+#define DEGREE 11
 #define DEGREE_PENALTY 0.2
+
+#define UPDATE_INTERVAL 100
 
 struct gate {
   int (*fn)(int*);
@@ -281,19 +284,11 @@ int input_g(int* vals) {
   return vals[0];
 }
 
-int goal1(int* inputs) {
-  return (inputs[0] ^ inputs[1]) & (inputs[2] ^ inputs[3]);
-}
-
-int goal2(int* inputs) {
-  return (inputs[0] ^ inputs[1]) | (inputs[2] ^ inputs[3]);
-}
-
-void goal1_vec(int* outputs, int* inputs) {
+void goal1(int* outputs, int* inputs) {
   outputs[0] = (inputs[0] ^ inputs[1]) & (inputs[2] ^ inputs[3]);
 }
 
-void goal2_vec(int* outputs, int* inputs) {
+void goal2(int* outputs, int* inputs) {
   outputs[0] = (inputs[0] ^ inputs[1]) | (inputs[2] ^ inputs[3]);
 }
 
@@ -545,8 +540,8 @@ int has_cycle(network* n) {
   return 0;
 }
 
-int degree(network* n) {
-  int i, j;
+int degree(network* n, int include_inputs) {
+  int i, j, k;
   for (i = 0; i < n->num_gates; i++) {
     n->gates[i]->value = INDETERMINATE;
   }
@@ -571,6 +566,18 @@ int degree(network* n) {
     int next_layer_size = 0;
     for (i = 0; i < gates_encountered_size; i++) {
       for (j = 0; j < gates_encountered[i]->num_inputs; j++) {
+        if (!include_inputs) {
+          int skip = 0;
+          for (k = 0; k < n->num_inputs; k++) {
+            if (gates_encountered[i]->inputs[j] == n->inputs[k]) {
+              skip = 1;
+              break;
+            }
+          }
+          if (skip) {
+            continue;
+          }
+        }
         if (gates_encountered[i]->inputs[j]->value == INDETERMINATE) {
           next_layer[next_layer_size++] = gates_encountered[i]->inputs[j];
           gates_encountered[i]->inputs[j]->value = 1;
@@ -598,7 +605,6 @@ int eval_network(int* output, network* n, int* vals) {
     n->inputs[i]->value = vals[i];
   }
 
-  // int* gates_to_eval = (int*)malloc(sizeof(int) * n->num_gates);
   static int gates_to_eval[GATES];
   for (i = 0; i < n->num_gates; i++) {
     gates_to_eval[i] = 1;
@@ -619,7 +625,6 @@ int eval_network(int* output, network* n, int* vals) {
     }
     if (all_indeterminate) {
       output[0] = INDETERMINATE;
-      // output[0] = 0;
       return 0;
     }
     if (new_gates == 0) {
@@ -656,7 +661,6 @@ double eval_network_fitness(network* n, int (*fn)(int*)) {
   int i,j;
   int max_val = 1 << n->num_inputs;
 
-  // int* bin_input = (int*)malloc(sizeof(int) * n->num_inputs);
   static int bin_input[INPUTS];
   int output[1];
 
@@ -673,8 +677,6 @@ double eval_network_fitness(network* n, int (*fn)(int*)) {
     }
     total++;
   }
-  // free(bin_input);
-  // free(output);
 
   return (double)correct / total;
 }
@@ -683,7 +685,6 @@ double eval_network_fitness_vector(network* n, void (*fn)(int*, int*)) {
   int i,j;
   int max_val = 1 << n->num_inputs;
 
-  // int* bin_input = (int*)malloc(sizeof(int) * n->num_inputs);
   static int bin_input[INPUTS];
   static int output[OUTPUTS];
   static int test_output[OUTPUTS];
@@ -706,8 +707,6 @@ double eval_network_fitness_vector(network* n, void (*fn)(int*, int*)) {
       total += n->num_outputs;
     }
   }
-  // free(bin_input);
-  // free(output);
 
   return (double)correct / total;
 }
@@ -792,7 +791,6 @@ void RunTests() {
   gen_truth_table(test8_r, not_g, 1, 1);
   assertListEq("Truth 4", test8_r, test8, 3);
 
-
   int i;
 
   gate* n1[1];
@@ -819,7 +817,6 @@ void RunTests() {
   eval_network_all(output_1, &n_1);
   assertMatrixEq("Network 1", output_1, t1, 4, 1);
   int cyclic = has_cycle(&n_1);
-  // int deg = degree(&n_1);
   assert(!cyclic);
   free(n1[0]);
   free(n_i1[0]);
@@ -858,7 +855,6 @@ void RunTests() {
   eval_network_all(output_2, &n_2);
   assertMatrixEq("Network 2", output_2, t2, 4, 1);
   cyclic = has_cycle(&n_2);
-  // deg = degree(&n_2);
   assert(cyclic);
   free(n2[0]);
   free(n2[1]);
@@ -922,7 +918,6 @@ void RunTests() {
   eval_network_all(output_3, &n_3);
   assertMatrixEq("Network 3", output_3, t3, 8, 6);
   cyclic = has_cycle(&n_3);
-  // deg = degree(&n_3);
   assert(cyclic);
   for (i = 0; i < 6; i++) {
     free(n3[i]);
@@ -970,17 +965,17 @@ void RunTests() {
 
   network net = {n_4, 10, n_i_4, 4, output, 1};
 
-  assertTrue("Goal 1", eval_network_fitness(&net, goal1) == 1.0);
+  assertTrue("Goal 1", eval_network_fitness_vector(&net, goal1) == 1.0);
   cyclic = has_cycle(&net);
-  // deg = degree(&net);
   assert(!cyclic);
-  // printf("Degree: %d\n", degree(&net));
   for (i = 0; i < 10; i++) {
     free(n_4[i]);
   }
   for (i = 0; i < 4; i++) {
     free(n_i_4[i]);
   }
+
+  printf("\n");
 }
 
 typedef struct {
@@ -1018,15 +1013,6 @@ void mutate(sfmt_t* sfmt, circuit* c) {
     c->DNA[mutation_gate] = rand_range(sfmt, 0, GATES + INPUTS);
   }
 }
-
-// void mutate(sfmt_t* sfmt, circuit* c) {
-//   int i;
-  // for (i = 0; i < c->DNA_length; i++) {
-  //   if (sfmt_genrand_real1(sfmt) < 0.2) {
-  //     c->DNA[i] = sfmt_genrand_uint32(sfmt) & 0xFF;
-  //   }
-  // }
-// }
 
 void create_circuit_network(circuit* c) {
   c->network->num_gates = GATES;
@@ -1073,11 +1059,6 @@ void circuitize(circuit* c) {
     }
   }
 
-  // test assert code: TO DELETE
-  for (i = 0; i < c->network->num_gates; i++) {
-    assert(c->network->gates[i]->num_inputs == 2);
-  }
-
   for (i = 0; i < OUTPUTS; i++) {
     uint16_t address = c->DNA[dna_pos++];
     if (address >= INPUTS) {
@@ -1113,7 +1094,6 @@ void free_network(network* n) {
   free(n->gates);
   free(n->inputs);
   free(n->output);
-  printf("\n");
 }
 
 int circuit_compare(const void* c1, const void* c2) {
@@ -1126,10 +1106,10 @@ int circuit_compare(const void* c1, const void* c2) {
   }
 }
 
-int time_to_perfect(sfmt_t* sfmt) {
+int time_to_perfect(sfmt_t* sfmt, void (**goal_fns)(int*, int*), int num_goals) {
   printf("Running Experiment\n");
   printf("==================\n");
-  printf("(Iteration: MaxFor100Iterations MaxOverall)\n");
+  printf("Iter LocalMax GlobalMax\n");
   
   circuit circuits[CIRCUITS];
 
@@ -1147,17 +1127,17 @@ int time_to_perfect(sfmt_t* sfmt) {
 
   int reached = -1;
   
-  int goal = 1;
+  int current_goal = 0;
   for (j = 0; ; j++) {
-    if ((j + 1) % EPOCH == 0) {
-      goal = !goal;
+    if (j != 0 && j % EPOCH == 0) {
+      current_goal++;
+      current_goal %= num_goals;
     }
     for (i = 0; i < CIRCUITS; i++) {
       circuitize(&circuits[i]);
       
-      // circuits[i].fitness = eval_network_fitness_vector(circuits[i].network, rivest);
-      circuits[i].fitness = eval_network_fitness_vector(circuits[i].network, goal ? goal1_vec : goal2_vec);
-      int deg = degree(circuits[i].network);
+      circuits[i].fitness = eval_network_fitness_vector(circuits[i].network, goal_fns[current_goal]);
+      int deg = degree(circuits[i].network, 0);
       if (deg > DEGREE) {
         circuits[i].fitness -= DEGREE_PENALTY * (deg - DEGREE);
       }
@@ -1181,7 +1161,7 @@ int time_to_perfect(sfmt_t* sfmt) {
     qsort(circuits, CIRCUITS, sizeof(circuit), circuit_compare);
     for (i = 0; i < CIRCUITS; i++) {
       if (i < ELITE) {
-        memcpy(circuits[i].DNA, circuits[CIRCUITS - i - 1].DNA, circuits[i].DNA_length);
+        memcpy(circuits[i].DNA, circuits[CIRCUITS - i - 1].DNA, circuits[i].DNA_length * sizeof(int));
         mutate(sfmt, &circuits[i]);
       } else if (i < CIRCUITS - ELITE - 1) {
         mutate(sfmt, &circuits[i]);
@@ -1192,8 +1172,8 @@ int time_to_perfect(sfmt_t* sfmt) {
       reached = j;
       break;
     }
-    if ((j + 1) % 100 == 0) {
-      printf("%d: %f %f (effective gates: %d; cyclic: %d)\n", j + 1, circuits[CIRCUITS-1].fitness, max_fitness, max_degree, max_cyclic);
+    if ((j + 1) % UPDATE_INTERVAL == 0) {
+      printf("%d: %f %f (effective gates: %d; %s)\n", j + 1, circuits[CIRCUITS-1].fitness, max_fitness, max_degree, (max_cyclic ? "cyclic" : "acyclic"));
     }
   }
 
@@ -1212,12 +1192,23 @@ int main(int argc, char** argv) {
   sfmt_t sfmt;
   sfmt_init_gen_rand(&sfmt, SEED);
 
+  int num_goals;
+
+  // GOAL FUNCTIONS: uncomment a line
+  // to change goal functionality.
+  //
+  // ----single goal----
+  // void (*goal_fns[1])(int*, int*) = {goal1}; num_goals = 1;
+  // ----modularly varying goals----
+  void (*goal_fns[2])(int*, int*) = {goal1, goal2}; num_goals = 2;
+
+
   int i;
   int total = 0;
-  for (i = 0; i < 50; i++) {
-    int reached = time_to_perfect(&sfmt);
+  for (i = 0; i < EXPERIMENTS; i++) {
+    int reached = time_to_perfect(&sfmt, goal_fns, num_goals);
     total += reached;
-    printf("%d: %d (%0.2f)\n", i+1, reached, (double)total / (i+1));
+    printf("---------------\nEXPERIMENT #%d: %d iterations (avg: %0.2f)\n\n", i+1, reached, (double)total / (i+1));
   }
 
   return 0;
