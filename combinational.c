@@ -11,27 +11,25 @@ typedef struct gate gate;
 #define INDETERMINATE -1
 #define MAX_FAN_IN 2
 
-#define SEED 18
+#define SEED 1
 
-#define INPUTS 3
-#define GATES 20
+#define INPUTS 4
+#define GATES 12
 #define INPUTS_PER_GATE 2
-#define OUTPUTS 6
+#define OUTPUTS 1
 #define DNA_LENGTH (GATES * INPUTS_PER_GATE + OUTPUTS)
 
 #define MUTATION 0.7
 #define TRIALS 10000
 #define EPOCH 20
-#define CIRCUITS 2000
+#define CIRCUITS 1000
 
-#define ELITE 800
-
-#define EXPERIMENTS 50
+#define ELITE 300
 
 #define CACHE_UNDEFINED -2
 #define MAX_CACHE 8
 
-#define DEGREE 11
+#define DEGREE 16
 #define DEGREE_PENALTY 0.2
 
 struct gate {
@@ -188,20 +186,13 @@ void gen_truth_table(int* result, int (*gate)(int*), int fan_in, int ternary) {
 void connect(gate* g1, gate* g2) {
   int i;
   int not_in = 1;
-  // for (i = 0; i < g2->num_inputs; i++) {
-  //   if (g1 == g2->inputs[i]) {
-  //     not_in = 0;
-  //   }
-  // }
-  // if (not_in) {
-    if (g2->num_inputs + 1 > g2->input_array_size) {
-      g2->input_array_size *= 2;
-      g2->inputs = (gate**)realloc(g2->inputs, g2->input_array_size * sizeof(gate*));
-    }
-    g2->inputs[g2->num_inputs++] = g1;
-  // }
 
-  // not_in = 1;
+  if (g2->num_inputs + 1 > g2->input_array_size) {
+    g2->input_array_size *= 2;
+    g2->inputs = (gate**)realloc(g2->inputs, g2->input_array_size * sizeof(gate*));
+  }
+  g2->inputs[g2->num_inputs++] = g1;
+
   for (i = 0; i < g1->num_outputs; i++) {
     if (g2 == g1->outputs[i]) {
       not_in = 0;
@@ -298,6 +289,14 @@ int goal2(int* inputs) {
   return (inputs[0] ^ inputs[1]) | (inputs[2] ^ inputs[3]);
 }
 
+void goal1_vec(int* outputs, int* inputs) {
+  outputs[0] = (inputs[0] ^ inputs[1]) & (inputs[2] ^ inputs[3]);
+}
+
+void goal2_vec(int* outputs, int* inputs) {
+  outputs[0] = (inputs[0] ^ inputs[1]) | (inputs[2] ^ inputs[3]);
+}
+
 void rivest(int* output, int* inputs) {
   int total = 0;
   int multiplier = 1;
@@ -367,6 +366,13 @@ void rivest(int* output, int* inputs) {
     assert(0);
   }
 }
+
+/* A function that takes a 3-bit input
+ * representing the numbers from 0-7
+ * inclusive. The 7-bit output represents
+ * which LEDs of a 7-segment display should
+ * light up to display that number.
+ */
 
 void digital_display(int* output, int* inputs) {
   int total = 0;
@@ -461,7 +467,6 @@ void make_gate(gate* g, int (*fn)(int*), int fan_in) {
   }
   g->cache = cache;
 
-  // g = (gate*)malloc(sizeof(gate));
   g->fn = fn;
   g->fan_in = fan_in;
   g->inputs = inputs;
@@ -471,17 +476,76 @@ void make_gate(gate* g, int (*fn)(int*), int fan_in) {
   g->num_outputs = 0;
   g->output_array_size = 1;
   g->value = INDETERMINATE;
-  // g->value = 0;
 }
 
 void reset_gate(gate* g) {
   g->num_inputs = 0;
   g->num_outputs = 0;
   g->value = INDETERMINATE;
-  // g->value = 0;
 }
 
-int degree(int* cyclic, network* n) {
+int has_cycle(network* n) {
+  static gate* examine[INPUTS + GATES];
+  static gate* stack[INPUTS + GATES];
+  int examine_len = 0;
+  int stack_len = 0;
+  int i, j, k;
+  
+  for (i = 0; i < n->num_inputs; i++) {
+    examine[examine_len++] = n->inputs[i];
+  }
+  for (i = 0; i < n->num_gates; i++) {
+    examine[examine_len++] = n->gates[i];
+  }
+  
+  int breaking;
+  
+  gate* node;
+  while (examine_len > 0) {
+    node = examine[--examine_len];
+    stack[0] = node;
+    stack_len = 1;
+    while (stack_len > 0) {
+      gate* top = stack[stack_len - 1];
+      breaking = 0;
+      for (i = 0; i < top->num_outputs; i++) {
+        node = top->outputs[i];
+        for (j = 0; j < stack_len; j++) {
+          if (node == stack[j]) {
+            return 1;
+          }
+        }
+        int found = 0;
+        for (j = 0; j < examine_len; j++) {
+          if (examine[j] == node) {
+            found = 1;
+            break;
+          }
+        }
+        if (found) {
+          stack[stack_len++] = node;
+          j = 0;
+          for (k = 0; k < examine_len; k++) {
+            if (examine[k] == node) {
+              j = 1;
+            }
+            examine[k] = examine[k + j];
+          }
+          examine_len--;
+          breaking = 1;
+          break;
+        }
+      }
+      if (!breaking) {
+        node = stack[--stack_len];
+      }
+    }
+  }
+  
+  return 0;
+}
+
+int degree(network* n) {
   int i, j;
   for (i = 0; i < n->num_gates; i++) {
     n->gates[i]->value = INDETERMINATE;
@@ -503,37 +567,25 @@ int degree(int* cyclic, network* n) {
     effective++;
   }
 
-  printf("Hi\n");
-  *cyclic = 0;
-
   while (1) {
     int next_layer_size = 0;
     for (i = 0; i < gates_encountered_size; i++) {
       for (j = 0; j < gates_encountered[i]->num_inputs; j++) {
-        if ((gates_encountered[i]->inputs[j]->value == INDETERMINATE || gates_encountered[i]->inputs[j]->value == 0) && gates_encountered[i]->inputs[j] != gates_encountered[i]) {
+        if (gates_encountered[i]->inputs[j]->value == INDETERMINATE) {
           next_layer[next_layer_size++] = gates_encountered[i]->inputs[j];
-          gates_encountered[i]->inputs[j]->value = 0;
-          effective++;
-        } else {
-          printf("%d\n", gates_encountered[i]->inputs[j]->value);
-          printf("Wabam!\n");
-          *cyclic = 1;
-        }
-      }
-      for (j = 0; j < gates_encountered[i]->num_inputs; j++) {
-        if (gates_encountered[i]->inputs[j]->value == 0) {
           gates_encountered[i]->inputs[j]->value = 1;
+          effective++;
         }
       }
     }
+    if (next_layer_size == 0) {
+      return effective;
+    }
+    
     for (i = 0; i < next_layer_size; i++) {
       gates_encountered[i] = next_layer[i];
     }
     gates_encountered_size = next_layer_size;
-
-    if (gates_encountered_size == 0) {
-      return effective;
-    }
   }
 }
 
@@ -696,6 +748,8 @@ void assertMatrixEq(const char* test, int** l1, int** l2, int length, int sublen
 }
 
 void RunTests() {
+  printf("Running Tests\n");
+  printf("=============\n");
   int test1_1[4] = {INDETERMINATE, 1, INDETERMINATE, 0};
   int test1_2[4] = {1,1,1,0};
   assertTrue("Subset 1", subset_v(test1_1, test1_2, 4));
@@ -764,9 +818,8 @@ void RunTests() {
   t1[3] = t_1_4;
   eval_network_all(output_1, &n_1);
   assertMatrixEq("Network 1", output_1, t1, 4, 1);
-  int cyclic;
-  int deg = degree(&cyclic, &n_1);
-  printf("%d\n", cyclic);
+  int cyclic = has_cycle(&n_1);
+  // int deg = degree(&n_1);
   assert(!cyclic);
   free(n1[0]);
   free(n_i1[0]);
@@ -804,7 +857,8 @@ void RunTests() {
   t2[3] = t_2_4;
   eval_network_all(output_2, &n_2);
   assertMatrixEq("Network 2", output_2, t2, 4, 1);
-  deg = degree(&cyclic, &n_1);
+  cyclic = has_cycle(&n_2);
+  // deg = degree(&n_2);
   assert(cyclic);
   free(n2[0]);
   free(n2[1]);
@@ -867,7 +921,8 @@ void RunTests() {
   t3[7] = t_3_8;
   eval_network_all(output_3, &n_3);
   assertMatrixEq("Network 3", output_3, t3, 8, 6);
-  deg = degree(&cyclic, &n_1);
+  cyclic = has_cycle(&n_3);
+  // deg = degree(&n_3);
   assert(cyclic);
   for (i = 0; i < 6; i++) {
     free(n3[i]);
@@ -916,7 +971,8 @@ void RunTests() {
   network net = {n_4, 10, n_i_4, 4, output, 1};
 
   assertTrue("Goal 1", eval_network_fitness(&net, goal1) == 1.0);
-  deg = degree(&cyclic, &net);
+  cyclic = has_cycle(&net);
+  // deg = degree(&net);
   assert(!cyclic);
   // printf("Degree: %d\n", degree(&net));
   for (i = 0; i < 10; i++) {
@@ -957,15 +1013,9 @@ void random_dna(sfmt_t* sfmt, circuit* c) {
 }
 
 void mutate(sfmt_t* sfmt, circuit* c) {
-  int i;
   if (sfmt_genrand_real1(sfmt) < MUTATION) {
     int mutation_gate = rand_range(sfmt, 0, DNA_LENGTH);
     c->DNA[mutation_gate] = rand_range(sfmt, 0, GATES + INPUTS);
-    for (i = 0; i < c->DNA_length; i++) {
-      if (sfmt_genrand_real1(sfmt) < 0.001) {
-        c->DNA[i] = rand_range(sfmt, 0, GATES + INPUTS);
-      }
-    }
   }
 }
 
@@ -1063,6 +1113,7 @@ void free_network(network* n) {
   free(n->gates);
   free(n->inputs);
   free(n->output);
+  printf("\n");
 }
 
 int circuit_compare(const void* c1, const void* c2) {
@@ -1076,6 +1127,10 @@ int circuit_compare(const void* c1, const void* c2) {
 }
 
 int time_to_perfect(sfmt_t* sfmt) {
+  printf("Running Experiment\n");
+  printf("==================\n");
+  printf("(Iteration: MaxFor100Iterations MaxOverall)\n");
+  
   circuit circuits[CIRCUITS];
 
   int i, j;
@@ -1091,20 +1146,29 @@ int time_to_perfect(sfmt_t* sfmt) {
   int max_cyclic = -1;
 
   int reached = -1;
+  
+  int goal = 1;
   for (j = 0; ; j++) {
+    if ((j + 1) % EPOCH == 0) {
+      goal = !goal;
+    }
     for (i = 0; i < CIRCUITS; i++) {
       circuitize(&circuits[i]);
-      circuits[i].fitness = eval_network_fitness_vector(circuits[i].network, rivest);
+      
+      // circuits[i].fitness = eval_network_fitness_vector(circuits[i].network, rivest);
+      circuits[i].fitness = eval_network_fitness_vector(circuits[i].network, goal ? goal1_vec : goal2_vec);
+      int deg = degree(circuits[i].network);
+      if (deg > DEGREE) {
+        circuits[i].fitness -= DEGREE_PENALTY * (deg - DEGREE);
+      }
 
       if (circuits[i].fitness > max_fitness) {
-        int cyclic;
-        int deg = degree(&cyclic, circuits[i].network);
+        int cyclic = has_cycle(circuits[i].network);
         max_fitness = circuits[i].fitness;
         max_degree = deg;
         max_cyclic = cyclic;
       } else if (circuits[i].fitness == max_fitness) {
-        int cyclic;
-        int deg = degree(&cyclic, circuits[i].network);
+        int cyclic = has_cycle(circuits[i].network);
         if (max_cyclic && !cyclic) {
           max_cyclic = cyclic;
         }
@@ -1129,7 +1193,7 @@ int time_to_perfect(sfmt_t* sfmt) {
       break;
     }
     if ((j + 1) % 100 == 0) {
-      printf("%d: %f %f (deg: %d; cyclic: %d)\n", j + 1, circuits[CIRCUITS-1].fitness, max_fitness, max_degree, max_cyclic);
+      printf("%d: %f %f (effective gates: %d; cyclic: %d)\n", j + 1, circuits[CIRCUITS-1].fitness, max_fitness, max_degree, max_cyclic);
     }
   }
 
